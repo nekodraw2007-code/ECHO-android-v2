@@ -30,7 +30,7 @@ import java.util.Date
 import java.util.Locale
 
 class MainActivity : Activity(), SensorEventListener {
-    private val background = Color.rgb(7, 11, 19)
+    private val bgColor = Color.rgb(7, 11, 19)
     private val surface = Color.rgb(16, 24, 37)
     private val surfaceAlt = Color.rgb(22, 33, 49)
     private val cyan = Color.rgb(83, 220, 237)
@@ -103,7 +103,7 @@ class MainActivity : Activity(), SensorEventListener {
     private fun buildInterface() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(background)
+            setBackgroundColor(bgColor)
         }
         val scroll = ScrollView(this)
         val page = LinearLayout(this).apply {
