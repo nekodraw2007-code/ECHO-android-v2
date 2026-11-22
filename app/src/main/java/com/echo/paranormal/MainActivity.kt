@@ -1,80 +1,473 @@
 package com.echo.paranormal
 
-import android.Manifest
 import android.app.Activity
 import android.content.Context
-import android.content.Intent
-import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
-import android.media.AudioFormat
-import android.media.AudioRecord
-import android.media.AudioTrack
-import android.media.MediaRecorder
-import android.os.Build
 import android.os.Bundle
-import android.os.Vibrator
+import android.os.Handler
+import android.os.Looper
 import android.os.VibrationEffect
-import android.provider.MediaStore
+import android.os.Vibrator
 import android.view.Gravity
 import android.view.View
-import android.widget.*
+import android.widget.Button
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.SeekBar
+import android.widget.TextView
+import android.widget.Toast
 import kotlin.math.abs
 import kotlin.math.sqrt
-import kotlin.math.sin
 import kotlin.random.Random
-import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import kotlin.concurrent.thread
 
 class MainActivity : Activity(), SensorEventListener {
-    private val bg = Color.rgb(9, 12, 19); private val panel = Color.rgb(18, 24, 36); private val cyan = Color.rgb(83, 220, 237); private val white = Color.WHITE; private val muted = Color.rgb(155, 169, 187)
+    private val background = Color.rgb(7, 11, 19)
+    private val surface = Color.rgb(16, 24, 37)
+    private val surfaceAlt = Color.rgb(22, 33, 49)
+    private val cyan = Color.rgb(83, 220, 237)
+    private val white = Color.rgb(242, 247, 252)
+    private val muted = Color.rgb(145, 163, 184)
+    private val green = Color.rgb(91, 220, 164)
+    private val orange = Color.rgb(255, 174, 92)
+
     private lateinit var sensorManager: SensorManager
-    private var magnetic: Sensor? = null; private var accelSensor: Sensor? = null; private var gyroSensor: Sensor? = null
-    private var m = floatArrayOf(0f,0f,0f); private var a = floatArrayOf(0f,0f,0f); private var g = floatArrayOf(0f,0f,0f)
-    private var total = 0f; private var baseline = 0f; private var calibrated = false; private var active = false; private var lastTrigger = 0L; private var movementAt = 0L
-    private var threshold = 5f; private var cooldown = 8000L; private var wordIndex = 0
-    private var currentTab = "Scanner"; private var recording: MediaRecorder? = null; private var recordingFile: File? = null; private var audioTrack: AudioTrack? = null; private var audioPlaying = false; private var noiseThread: Thread? = null
-    private val events = mutableListOf<String>(); private val words = listOf("PRÉSENCE","ICI","OUI","NON","ÉCOUTE","AIDE","MAISON","MAINTENANT","STOP","INCONNU","CALME","PARTIR","QUI ?","PROCHE","LUMIÈRE","FAMILLE","PORTE","ATTENDS")
-    private lateinit var root: LinearLayout; private lateinit var content: LinearLayout; private lateinit var topStatus: TextView; private lateinit var sensorValues: TextView; private lateinit var radar: Radar
-    private lateinit var wordLabel: TextView; private lateinit var eventsLabel: TextView
-    override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState); sensorManager=getSystemService(Context.SENSOR_SERVICE) as SensorManager; magnetic=sensorManager.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD); accelSensor=sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER); gyroSensor=sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE); buildShell(); loadEvents(); showScanner() }
-    private fun buildShell(){ root=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setBackgroundColor(bg)}; val header=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(20),dp(18),dp(20),dp(12))}; header.addView(txt("E C H O",25,white,true)); header.addView(txt("PARANORMAL FIELD TOOLS · SENSOR-BASED",10,cyan,true)); topStatus=txt("CAPTEURS EN INITIALISATION",11,muted); header.addView(topStatus); root.addView(header)
-        val nav=LinearLayout(this).apply{orientation=LinearLayout.HORIZONTAL;setPadding(dp(8),dp(5),dp(8),dp(5));setBackgroundColor(panel)}; listOf("Scanner","Talk","Audio","EVP","Caméra","Journal").forEach { t -> nav.addView(Button(this).apply{text=textNav(t);textSize=10f;setTextColor(if(t==currentTab)cyan else muted);setBackgroundColor(Color.TRANSPARENT);setPadding(dp(4),dp(6),dp(4),dp(6));setOnClickListener{currentTab=t;refreshTab()}},LinearLayout.LayoutParams(0,-2,1f)) }; root.addView(nav)
-        val scroll=ScrollView(this); content=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(16),dp(14),dp(16),dp(26))};scroll.addView(content);root.addView(scroll,LinearLayout.LayoutParams(-1,0,1f));setContentView(root)
+    private var magneticSensor: Sensor? = null
+    private var accelerometer: Sensor? = null
+    private var gyroscope: Sensor? = null
+
+    private var magnetic = floatArrayOf(0f, 0f, 0f)
+    private var acceleration = floatArrayOf(0f, 0f, 0f)
+    private var rotation = floatArrayOf(0f, 0f, 0f)
+    private var fieldStrength = 0f
+    private var baseline = 0f
+    private var delta = 0f
+    private var smoothedDelta = 0f
+    private var calibrated = false
+    private var calibrating = false
+    private var calibrationStarted = 0L
+    private var calibrationSum = 0.0
+    private var calibrationCount = 0
+    private var sessionActive = false
+    private var threshold = 2.0f
+    private var lastTrigger = 0L
+    private var aboveThresholdSamples = 0
+    private var movementAt = 0L
+    private var lastWord = ""
+
+    private val cooldownMs = 8500L
+    private val words = listOf(
+        "OUI", "NON", "ICI", "LÀ", "PROCHE", "LOIN", "ATTENDS", "ÉCOUTE",
+        "AIDE", "STOP", "PARTIR", "RESTE", "MAISON", "PORTE", "PIÈCE",
+        "LUMIÈRE", "OMBRE", "FAMILLE", "AMI", "ENFANT", "HOMME", "FEMME",
+        "QUI ?", "POURQUOI ?", "QUAND ?", "COMMENT ?", "MAINTENANT",
+        "AVANT", "APRÈS", "BIENTÔT", "CALME", "PEUR", "FROID", "CHAUD",
+        "DERRIÈRE", "DEVANT", "GAUCHE", "DROITE", "UN", "DEUX", "TROIS",
+        "QUATRE", "CINQ", "MERCI", "BONJOUR", "AU REVOIR", "ENTENDS",
+        "SOUVIENS", "NOM", "SILENCE"
+    )
+    private val history = mutableListOf<String>()
+
+    private lateinit var statusLabel: TextView
+    private lateinit var fieldLabel: TextView
+    private lateinit var deltaLabel: TextView
+    private lateinit var axisLabel: TextView
+    private lateinit var wordLabel: TextView
+    private lateinit var historyLabel: TextView
+    private lateinit var calibrationButton: Button
+    private lateinit var sessionButton: Button
+    private lateinit var thresholdLabel: TextView
+    private lateinit var sensorLabel: TextView
+    private val ui = Handler(Looper.getMainLooper())
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
+        magneticSensor = sensorManager.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD)
+        accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+        gyroscope = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
+        history.addAll(getSharedPreferences("echo_basic", MODE_PRIVATE)
+            .getString("history", "")?.split("\n")?.filter { it.isNotBlank() } ?: emptyList())
+        buildInterface()
+        updateReadings()
     }
-    private fun textNav(s:String)=s
-    private fun refreshTab(){content.removeAllViews();when(currentTab){ "Scanner"->showScanner();"Talk"->showTalk();"Audio"->showAudio();"EVP"->showEvp();"Caméra"->showCamera();"Journal"->showJournal()}}
-    private fun showScanner(){ content.addView(card("SCANNER MAGNÉTIQUE", "Mesures en direct du magnétomètre physique")); radar=Radar(this); content.addView(radar,LinearLayout.LayoutParams(-1,dp(250))); val emf=txt("%.2f µT".format(total),34,white,true).apply{gravity=Gravity.CENTER};content.addView(emf); sensorValues=txt("Variation : -- µT\nX -- · Y -- · Z --",13,cyan).apply{gravity=Gravity.CENTER};content.addView(sensorValues);topStatus.text=if(magnetic==null) "MAGNÉTOMÈTRE ABSENT" else "CAPTEURS · ${if(magnetic!=null)"MAG" else "—"} ${if(accelSensor!=null)"ACC" else "—"} ${if(gyroSensor!=null)"GYRO" else "—"}"
-        content.addView(btn("CALIBRER LA RÉFÉRENCE"){baseline=total;calibrated=magnetic!=null;topStatus.text=if(calibrated)"Référence %.2f µT calibrée".format(baseline) else "Magnétomètre non disponible";addEvent("Calibration · référence %.2f µT".format(baseline))}); content.addView(btn(if(active)"ARRÊTER LA SESSION" else "DÉMARRER LA SESSION"){active=!active;if(active&&!calibrated){baseline=total;calibrated=magnetic!=null};topStatus.text=if(active)"SESSION ACTIVE · surveillance capteurs" else "SESSION ARRÊTÉE";addEvent(if(active)"Session démarrée" else "Session arrêtée")})
-        content.addView(card("MOUVEMENT", "Accéléromètre et gyroscope")); content.addView(txt("Accéléromètre : %.2f / %.2f / %.2f m/s²\nGyroscope : %.2f / %.2f / %.2f rad/s\nÉtat : %s".format(a[0],a[1],a[2],g[0],g[1],g[2],if(System.currentTimeMillis()-movementAt<1600)"mouvement détecté" else "stable"),13,muted)); content.addView(card("SEUIL DE DÉTECTION", "Seuil de variation magnétique : %.1f µT".format(threshold))); val seek=SeekBar(this).apply{max=30;progress=threshold.toInt();setOnSeekBarChangeListener(object:SeekBar.OnSeekBarChangeListener{override fun onProgressChanged(s:SeekBar?,p:Int,u:Boolean){threshold=p.coerceAtLeast(1).toFloat()};override fun onStartTrackingTouch(s:SeekBar?){};override fun onStopTrackingTouch(s:SeekBar?){}})};content.addView(seek);content.addView(txt("Augmente le seuil pour réduire les déclenchements. Les variations peuvent être dues à l'environnement électrique ou métallique.",12,muted));content.addView(card("DERNIER ÉVÉNEMENT",events.firstOrNull()?:"Aucun événement enregistré")) }
-    private fun showTalk(){content.addView(card("SPIRIT TALK","Moteur de mots déclenché par les événements capteurs"));wordLabel=txt("—",36,cyan,true).apply{gravity=Gravity.CENTER;setPadding(0,dp(26),0,dp(26))};content.addView(wordLabel);content.addView(txt("Mode expérimental : les mots sont sélectionnés à partir d'événements mesurés, sans interprétation de leur origine.",13,muted));content.addView(btn("LANCER / ARRÊTER LE MODE TALK"){active=!active;topStatus.text=if(active)"SPIRIT TALK · ACTIF" else "SPIRIT TALK · ARRÊTÉ";addEvent(if(active)"Spirit Talk activé" else "Spirit Talk arrêté")});content.addView(btn("ÉMETTRE UN MOT DE TEST"){val w=words[wordIndex++%words.size];wordLabel.text=w;addEvent("Test manuel · $w")});content.addView(card("DICTIONNAIRE",words.joinToString(" · ")))}
-    private fun showAudio(){content.addView(card("SPIRIT BOX · AUDIO","Audio synthétisé localement, sans réseau"));content.addView(txt("Les balayages audio sont des effets sonores expérimentaux. Ils ne constituent pas une réception radio réelle.",12,muted));content.addView(btn("BRUIT BLANC · LANCER / ARRÊTER"){toggleNoise(0)});content.addView(btn("BRUIT ROSE · LANCER / ARRÊTER"){toggleNoise(1)});content.addView(btn("BRUIT BRUN · LANCER / ARRÊTER"){toggleNoise(2)});content.addView(btn("BALAYAGE DE TON · LANCER / ARRÊTER"){toggleNoise(3)});content.addView(btn("STOP AUDIO"){stopAudio()})}
-    private fun showEvp(){content.addView(card("EVP · ENREGISTREMENT","Capture microphone, sauvegarde locale"));content.addView(txt("Les enregistrements sont stockés dans le dossier privé de l'application. Autorise le microphone pour commencer.",13,muted));content.addView(btn(if(recording==null)"DÉMARRER L'ENREGISTREMENT" else "ARRÊTER L'ENREGISTREMENT"){if(recording==null)startRecording()else stopRecording()});content.addView(card("DERNIER FICHIER",recordingFile?.name?:"Aucun enregistrement dans cette session"))}
-    private fun startRecording(){if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED){requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 21);return};try{val dir=File(filesDir,"evp").apply{mkdirs()};val f=File(dir,"ECHO_EVP_${System.currentTimeMillis()}.m4a");val r=if(Build.VERSION.SDK_INT>=31)MediaRecorder(this) else MediaRecorder();r.setAudioSource(MediaRecorder.AudioSource.MIC);r.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);r.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);r.setOutputFile(f.absolutePath);r.prepare();r.start();recording=r;recordingFile=f;addEvent("EVP · enregistrement démarré");Toast.makeText(this,"Enregistrement actif",Toast.LENGTH_SHORT).show()}catch(e:Exception){Toast.makeText(this,"Erreur enregistrement : ${e.localizedMessage}",Toast.LENGTH_LONG).show();recording?.release();recording=null}}
-    private fun stopRecording(){try{recording?.stop();recording?.release();recording=null;addEvent("EVP · fichier ${recordingFile?.name}");Toast.makeText(this,"Enregistrement sauvegardé",Toast.LENGTH_SHORT).show()}catch(e:Exception){recording?.release();recording=null;Toast.makeText(this,"Enregistrement trop court",Toast.LENGTH_SHORT).show()};refreshTab()}
-    private fun showCamera(){content.addView(card("CAMÉRA D'INVESTIGATION","Capture avec caméra réelle du téléphone"));content.addView(txt("Les filtres nocturnes et thermiques peuvent être ajoutés au traitement vidéo. La caméra thermique ci-dessous n'est pas une mesure de température.",13,muted));content.addView(btn("CAPTURER UNE PHOTO"){try{startActivityForResult(Intent(MediaStore.ACTION_IMAGE_CAPTURE), 22)}catch(e:Exception){Toast.makeText(this,"Caméra non disponible",Toast.LENGTH_SHORT).show()}});content.addView(card("OVERLAYS","Les mesures EMF peuvent être consultées dans l'onglet Scanner pendant la session."))}
-    private fun showJournal(){content.addView(card("JOURNAL D'INVESTIGATION","Événements récents enregistrés sur cet appareil"));eventsLabel=txt(if(events.isEmpty())"Aucun événement" else events.joinToString("\n\n"),13,muted);content.addView(eventsLabel);content.addView(btn("EFFACER LE JOURNAL"){events.clear();getSharedPreferences("echo",0).edit().remove("events").apply();refreshTab()})}
-    private fun toggleNoise(mode:Int){if(audioPlaying){stopAudio();return};audioPlaying=true;noiseThread=thread{val rate=44100;val buffer=2048;var last=0.0;val rand=Random.Default;val track=AudioTrack.Builder().setAudioAttributes(android.media.AudioAttributes.Builder().setUsage(android.media.AudioAttributes.USAGE_MEDIA).setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC).build()).setAudioFormat(AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT).setSampleRate(rate).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build()).setBufferSizeInBytes(buffer*2).setTransferMode(AudioTrack.MODE_STREAM).build();audioTrack=track;track.play();var phase=0.0;while(audioPlaying){val samples=ShortArray(buffer);for(i in samples.indices){val x=when(mode){0->rand.nextDouble(-1.0,1.0);1->{val n=rand.nextDouble(-1.0,1.0);last=.96*last+.04*n;last};2->{val n=rand.nextDouble(-1.0,1.0);last=.995*last+.005*n;last};else->{phase+=2*Math.PI*(180+((phase/(2*Math.PI))%1)*900)/rate;if(phase>2*Math.PI)phase%=2*Math.PI;0.25*sin(phase)}};samples[i]=(x*8000).toInt().coerceIn(-32767,32767).toShort()};track.write(samples,0,samples.size)};track.stop();track.release();audioTrack=null}}
-    private fun stopAudio(){audioPlaying=false;try{audioTrack?.stop();audioTrack?.release()}catch(_:Exception){};audioTrack=null}
-    override fun onRequestPermissionsResult(requestCode:Int, permissions:Array<out String>, grantResults:IntArray){super.onRequestPermissionsResult(requestCode,permissions,grantResults);if(requestCode==21&&grantResults.isNotEmpty()&&grantResults[0]==PackageManager.PERMISSION_GRANTED)startRecording()}
-    @Deprecated("Legacy camera intent callback")
-    override fun onActivityResult(requestCode:Int,resultCode:Int,data:Intent?){super.onActivityResult(requestCode,resultCode,data);if(requestCode==22&&resultCode==RESULT_OK)addEvent("Photo capturée avec l'appareil")}
-    override fun onResume(){super.onResume();listOfNotNull(magnetic,accelSensor,gyroSensor).forEach{sensorManager.registerListener(this,it,SensorManager.SENSOR_DELAY_GAME)}};override fun onPause(){super.onPause();sensorManager.unregisterListener(this);stopAudio();if(recording!=null)stopRecording()};override fun onAccuracyChanged(sensor:Sensor?,accuracy:Int){}
-    override fun onSensorChanged(e:SensorEvent){when(e.sensor.type){Sensor.TYPE_MAGNETIC_FIELD->{m=e.values.copyOf();total=sqrt(m[0]*m[0]+m[1]*m[1]+m[2]*m[2]);if(!calibrated&&total>0){baseline=total;calibrated=true};val d=abs(total-baseline);if(currentTab=="Scanner"){sensorValues.text="Variation : %.2f µT\nX %.1f · Y %.1f · Z %.1f".format(d,m[0],m[1],m[2]);radar.set(d,total)};if(active&&d>=threshold&&System.currentTimeMillis()-lastTrigger>cooldown){lastTrigger=System.currentTimeMillis();val w=words[wordIndex++%words.size];if(currentTab=="Talk"&&::wordLabel.isInitialized)wordLabel.text=w;addEvent("Variation magnétique %.2f µT · %s".format(d,w));vibrate()}};Sensor.TYPE_ACCELEROMETER->{a=e.values.copyOf();if(abs(sqrt(a[0]*a[0]+a[1]*a[1]+a[2]*a[2])-9.8f)>.8f)movementAt=System.currentTimeMillis()};Sensor.TYPE_GYROSCOPE->g=e.values.copyOf()}}
-    private fun addEvent(s:String){val stamp=SimpleDateFormat("HH:mm:ss · dd/MM",Locale.getDefault()).format(Date());events.add(0,"$stamp\n$s");if(events.size>100)events.removeAt(events.lastIndex);getSharedPreferences("echo",0).edit().putString("events",events.joinToString("|||")).apply();if(::eventsLabel.isInitialized&&currentTab=="Journal")eventsLabel.text=events.joinToString("\n\n");if(::topStatus.isInitialized)topStatus.text="ÉVÉNEMENT · $s"}
-    private fun loadEvents(){val saved=getSharedPreferences("echo",0).getString("events",null);if(saved!=null)events.addAll(saved.split("|||").filter{it.isNotBlank()})}
-    private fun vibrate(){try{val v=getSystemService(VIBRATOR_SERVICE) as Vibrator;if(v.hasVibrator())if(Build.VERSION.SDK_INT>=26)v.vibrate(VibrationEffect.createOneShot(160,VibrationEffect.DEFAULT_AMPLITUDE))else @Suppress("DEPRECATION") v.vibrate(160)}catch(_:Exception){}}
-    private fun card(title:String,detail:String)=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(14),dp(13),dp(14),dp(13));setBackgroundColor(panel);layoutParams=LinearLayout.LayoutParams(-1,-2).apply{bottomMargin=dp(10)};addView(txt(title,12,cyan,true));addView(txt(detail,13,muted))}
-    private fun btn(label:String,act:()->Unit)=Button(this).apply{text=label;textSize=12f;setTextColor(white);setBackgroundColor(Color.rgb(30,47,66));setOnClickListener{act()};layoutParams=LinearLayout.LayoutParams(-1,dp(50)).apply{bottomMargin=dp(8)}}
-    private fun txt(s:String,size:Int,color:Int,bold:Boolean=false)=TextView(this).apply{text=s;textSize=size.toFloat();setTextColor(color);if(bold)typeface=Typeface.DEFAULT_BOLD;setPadding(0,dp(4),0,dp(5))}
-    private fun dp(v:Int)=(v*resources.displayMetrics.density).toInt()
-    override fun onBackPressed(){if(currentTab!="Scanner"){currentTab="Scanner";refreshTab()}else super.onBackPressed()}
+
+    private fun buildInterface() {
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(background)
+        }
+        val scroll = ScrollView(this)
+        val page = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(22), dp(20), dp(30))
+        }
+        scroll.addView(page)
+        root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+
+        page.addView(label("E C H O", 27, white, true))
+        page.addView(label("COMMUNICATION MAGNÉTIQUE", 11, cyan, true))
+        page.addView(label("EXPÉRIENCE SENSORIELLE · HORS LIGNE", 10, muted))
+        page.addView(space(18))
+
+        val sensorCard = card()
+        sensorCard.addView(label("CHAMP MAGNÉTIQUE", 11, cyan, true))
+        fieldLabel = label("--.-- µT", 42, white, true).apply {
+            gravity = Gravity.CENTER
+            setPadding(0, dp(8), 0, dp(2))
+        }
+        sensorCard.addView(fieldLabel)
+        deltaLabel = label("Variation par rapport à la référence : -- µT", 13, muted).apply {
+            gravity = Gravity.CENTER
+        }
+        sensorCard.addView(deltaLabel)
+        axisLabel = label("X : --    Y : --    Z : --", 12, muted).apply {
+            gravity = Gravity.CENTER
+            setPadding(0, dp(8), 0, dp(2))
+        }
+        sensorCard.addView(axisLabel)
+        page.addView(sensorCard)
+
+        page.addView(space(12))
+        statusLabel = label("Recherche des capteurs…", 12, orange, true).apply {
+            gravity = Gravity.CENTER
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+            background = rounded(surfaceAlt, 12)
+        }
+        page.addView(statusLabel, matchWidth())
+
+        page.addView(space(12))
+        val calibrationCard = card()
+        calibrationCard.addView(label("1 · CALIBRATION", 12, cyan, true))
+        calibrationCard.addView(label(
+            "Pose le téléphone sur une surface stable et lance la calibration. ECHO calcule une référence à partir de mesures réelles.",
+            13, muted
+        ))
+        calibrationButton = actionButton("CALIBRER LE CAPTEUR") { startCalibration() }
+        calibrationCard.addView(calibrationButton, matchWidth())
+        page.addView(calibrationCard)
+
+        page.addView(space(10))
+        val talkCard = card()
+        talkCard.addView(label("2 · SESSION DE COMMUNICATION", 12, cyan, true))
+        wordLabel = label("—", 34, white, true).apply {
+            gravity = Gravity.CENTER
+            setPadding(0, dp(22), 0, dp(22))
+        }
+        talkCard.addView(wordLabel)
+        talkCard.addView(label(
+            "Un mot est choisi uniquement lorsqu'une variation magnétique mesurée dépasse le seuil pendant plusieurs échantillons.",
+            12, muted
+        ))
+        sessionButton = actionButton("DÉMARRER LA SESSION") { toggleSession() }
+        talkCard.addView(sessionButton, matchWidth())
+        page.addView(talkCard)
+
+        page.addView(space(10))
+        val settingsCard = card()
+        settingsCard.addView(label("SENSIBILITÉ", 12, cyan, true))
+        thresholdLabel = label("Seuil de variation : %.1f µT".format(Locale.FRANCE, threshold), 13, white)
+        settingsCard.addView(thresholdLabel)
+        val seek = SeekBar(this).apply {
+            max = 149
+            progress = 10
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(bar: SeekBar?, progress: Int, fromUser: Boolean) {
+                    threshold = (progress + 1) / 5f
+                    thresholdLabel.text = "Seuil de variation : %.1f µT".format(Locale.FRANCE, threshold)
+                }
+                override fun onStartTrackingTouch(bar: SeekBar?) {}
+                override fun onStopTrackingTouch(bar: SeekBar?) {}
+            })
+        }
+        settingsCard.addView(seek)
+        settingsCard.addView(label(
+            "Une sensibilité élevée déclenche moins souvent. Les appareils électriques, aimants et objets métalliques peuvent modifier le champ mesuré.",
+            12, muted
+        ))
+        page.addView(settingsCard)
+
+        page.addView(space(10))
+        val infoCard = card()
+        infoCard.addView(label("ÉTAT DES CAPTEURS", 12, cyan, true))
+        sensorLabel = label("", 12, muted)
+        infoCard.addView(sensorLabel)
+        page.addView(infoCard)
+
+        page.addView(space(10))
+        val historyCard = card()
+        historyCard.addView(label("JOURNAL DE SESSION", 12, cyan, true))
+        historyLabel = label("", 12, muted)
+        historyCard.addView(historyLabel)
+        historyCard.addView(actionButton("EFFACER L'HISTORIQUE") {
+            history.clear()
+            persistHistory()
+            updateHistory()
+        }, matchWidth())
+        page.addView(historyCard)
+
+        page.addView(space(12))
+        page.addView(label(
+            "ECHO mesure des phénomènes physiques. Les variations et les mots affichés ne permettent pas d'établir la présence d'une entité ou d'un esprit.",
+            11, muted
+        ))
+        setContentView(root)
+    }
+
+    private fun startCalibration() {
+        if (magneticSensor == null) {
+            Toast.makeText(this, "Ce téléphone ne possède pas de magnétomètre.", Toast.LENGTH_LONG).show()
+            return
+        }
+        sessionActive = false
+        calibrating = true
+        calibrated = false
+        calibrationStarted = System.currentTimeMillis()
+        calibrationSum = 0.0
+        calibrationCount = 0
+        aboveThresholdSamples = 0
+        sessionButton.text = "DÉMARRER LA SESSION"
+        calibrationButton.text = "CALIBRATION EN COURS…"
+        statusLabel.text = "Calibration : garde le téléphone immobile"
+        statusLabel.setTextColor(orange)
+    }
+
+    private fun toggleSession() {
+        if (sessionActive) {
+            sessionActive = false
+            sessionButton.text = "DÉMARRER LA SESSION"
+            statusLabel.text = "Session arrêtée"
+            statusLabel.setTextColor(muted)
+            addHistory("Session arrêtée")
+            return
+        }
+        if (magneticSensor == null) {
+            Toast.makeText(this, "Magnétomètre indisponible sur cet appareil.", Toast.LENGTH_LONG).show()
+            return
+        }
+        if (!calibrated) {
+            Toast.makeText(this, "Effectue d'abord une calibration.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        sessionActive = true
+        lastTrigger = System.currentTimeMillis()
+        aboveThresholdSamples = 0
+        sessionButton.text = "ARRÊTER LA SESSION"
+        statusLabel.text = "SESSION ACTIVE · analyse des variations"
+        statusLabel.setTextColor(green)
+        addHistory("Session démarrée · référence %.2f µT".format(Locale.FRANCE, baseline))
+    }
+
+    private fun registerSensors() {
+        listOfNotNull(magneticSensor, accelerometer, gyroscope).forEach {
+            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME)
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        registerSensors()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        sensorManager.unregisterListener(this)
+        if (sessionActive) {
+            sessionActive = false
+            if (::sessionButton.isInitialized) sessionButton.text = "DÉMARRER LA SESSION"
+            if (::statusLabel.isInitialized) {
+                statusLabel.text = "Session mise en pause"
+                statusLabel.setTextColor(muted)
+            }
+        }
+    }
+
+    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+
+    override fun onSensorChanged(event: SensorEvent) {
+        when (event.sensor.type) {
+            Sensor.TYPE_MAGNETIC_FIELD -> {
+                magnetic = event.values.copyOf()
+                fieldStrength = sqrt(
+                    magnetic[0] * magnetic[0] +
+                    magnetic[1] * magnetic[1] +
+                    magnetic[2] * magnetic[2]
+                )
+                if (calibrating) collectCalibrationSample()
+                if (calibrated) {
+                    delta = abs(fieldStrength - baseline)
+                    smoothedDelta = if (smoothedDelta == 0f) delta else smoothedDelta * 0.78f + delta * 0.22f
+                    detectVariation()
+                }
+                updateReadings()
+            }
+            Sensor.TYPE_ACCELEROMETER -> {
+                acceleration = event.values.copyOf()
+                val magnitude = sqrt(acceleration.sumOf { (it * it).toDouble() }).toFloat()
+                if (abs(magnitude - SensorManager.GRAVITY_EARTH) > 0.75f) movementAt = System.currentTimeMillis()
+            }
+            Sensor.TYPE_GYROSCOPE -> {
+                rotation = event.values.copyOf()
+                val speed = sqrt(rotation.sumOf { (it * it).toDouble() }).toFloat()
+                if (speed > 0.35f) movementAt = System.currentTimeMillis()
+            }
+        }
+    }
+
+    private fun collectCalibrationSample() {
+        if (fieldStrength <= 0f) return
+        calibrationSum += fieldStrength
+        calibrationCount++
+        val elapsed = System.currentTimeMillis() - calibrationStarted
+        if (calibrationCount >= 35 || elapsed >= 4000L) {
+            calibrating = false
+            if (calibrationCount >= 8) {
+                baseline = (calibrationSum / calibrationCount).toFloat()
+                calibrated = true
+                smoothedDelta = 0f
+                calibrationButton.text = "RECALIBRER"
+                statusLabel.text = "Référence calibrée · %.2f µT".format(Locale.FRANCE, baseline)
+                statusLabel.setTextColor(green)
+                addHistory("Calibration · %.2f µT (%d mesures)".format(Locale.FRANCE, baseline, calibrationCount))
+            } else {
+                statusLabel.text = "Calibration insuffisante · réessaie"
+                statusLabel.setTextColor(orange)
+            }
+        } else {
+            statusLabel.text = "Calibration · $calibrationCount mesures"
+        }
+    }
+
+    private fun detectVariation() {
+        if (!sessionActive || !calibrated) return
+        val moving = System.currentTimeMillis() - movementAt < 900L
+        if (moving) {
+            aboveThresholdSamples = 0
+            return
+        }
+        if (smoothedDelta >= threshold) {
+            aboveThresholdSamples++
+        } else {
+            aboveThresholdSamples = 0
+        }
+        val now = System.currentTimeMillis()
+        if (aboveThresholdSamples >= 5 && now - lastTrigger >= cooldownMs) {
+            lastTrigger = now
+            aboveThresholdSamples = 0
+            val word = chooseWord()
+            wordLabel.text = word
+            addHistory("Mot : $word · variation %.2f µT · champ %.2f µT".format(
+                Locale.FRANCE, delta, fieldStrength
+            ))
+            vibrate()
+        }
+    }
+
+    private fun chooseWord(): String {
+        val candidates = words.filter { it != lastWord }
+        val selected = candidates[Random.nextInt(candidates.size)]
+        lastWord = selected
+        return selected
+    }
+
+    private fun updateReadings() {
+        if (!::fieldLabel.isInitialized) return
+        fieldLabel.text = if (magneticSensor == null) "N/D" else "%.2f µT".format(Locale.FRANCE, fieldStrength)
+        deltaLabel.text = if (calibrated) {
+            "Variation par rapport à la référence : %.2f µT".format(Locale.FRANCE, delta)
+        } else {
+            "Variation par rapport à la référence : non calibrée"
+        }
+        axisLabel.text = "X : %.1f    Y : %.1f    Z : %.1f µT".format(
+            Locale.FRANCE, magnetic[0], magnetic[1], magnetic[2]
+        )
+        val available = buildList {
+            add(if (magneticSensor != null) "Magnétomètre : disponible" else "Magnétomètre : absent")
+            add(if (accelerometer != null) "Accéléromètre : disponible" else "Accéléromètre : absent")
+            add(if (gyroscope != null) "Gyroscope : disponible" else "Gyroscope : absent")
+        }
+        if (::sensorLabel.isInitialized) sensorLabel.text = available.joinToString("\n")
+    }
+
+    private fun addHistory(message: String) {
+        val stamp = SimpleDateFormat("HH:mm:ss", Locale.FRANCE).format(Date())
+        history.add(0, "$stamp  ·  $message")
+        while (history.size > 60) history.removeAt(history.lastIndex)
+        persistHistory()
+        updateHistory()
+    }
+
+    private fun updateHistory() {
+        if (::historyLabel.isInitialized) {
+            historyLabel.text = if (history.isEmpty()) "Aucun événement pour le moment." else history.take(12).joinToString("\n\n")
+        }
+    }
+
+    private fun persistHistory() {
+        getSharedPreferences("echo_basic", MODE_PRIVATE).edit()
+            .putString("history", history.joinToString("\n"))
+            .apply()
+    }
+
+    private fun vibrate() {
+        try {
+            val vibrator = getSystemService(VIBRATOR_SERVICE) as Vibrator
+            if (vibrator.hasVibrator()) {
+                if (android.os.Build.VERSION.SDK_INT >= 26) {
+                    vibrator.vibrate(VibrationEffect.createOneShot(120, VibrationEffect.DEFAULT_AMPLITUDE))
+                } else {
+                    @Suppress("DEPRECATION")
+                    vibrator.vibrate(120)
+                }
+            }
+        } catch (_: Exception) { }
+    }
+
+    private fun card() = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(dp(16), dp(15), dp(16), dp(15))
+        background = rounded(surface, 18)
+        elevation = dp(2).toFloat()
+    }
+
+    private fun label(text: String, size: Int, color: Int, bold: Boolean = false) =
+        TextView(this).apply {
+            this.text = text
+            textSize = size.toFloat()
+            setTextColor(color)
+            if (bold) typeface = Typeface.DEFAULT_BOLD
+            setPadding(0, dp(3), 0, dp(4))
+        }
+
+    private fun actionButton(text: String, action: () -> Unit) = Button(this).apply {
+        this.text = text
+        textSize = 12f
+        isAllCaps = false
+        setTextColor(white)
+        background = rounded(Color.rgb(27, 65, 82), 12)
+        setPadding(dp(10), dp(8), dp(10), dp(8))
+        setOnClickListener { action() }
+        layoutParams = LinearLayout.LayoutParams(-1, dp(48)).apply { topMargin = dp(12) }
+    }
+
+    private fun rounded(color: Int, radius: Int) = GradientDrawable().apply {
+        setColor(color)
+        cornerRadius = dp(radius).toFloat()
+    }
+
+    private fun space(height: Int) = View(this).apply {
+        layoutParams = LinearLayout.LayoutParams(1, dp(height))
+    }
+
+    private fun matchWidth() = LinearLayout.LayoutParams(-1, -2)
+
+    private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
 }
-class Radar(c:Context):View(c){private val p=android.graphics.Paint(3);var delta=0f;var total=0f;fun set(d:Float,t:Float){delta=d;total=t;invalidate()};override fun onDraw(c:android.graphics.Canvas){super.onDraw(c);val x=width/2f;val y=height/2f;val r=minOf(width,height)*.42f;p.color=Color.rgb(29,47,65);p.style=android.graphics.Paint.Style.STROKE;p.strokeWidth=1f;for(i in 1..4)c.drawCircle(x,y,r*i/4,p);c.drawLine(x-r,y,x+r,y,p);c.drawLine(x,y-r,x,y+r,p);p.style=android.graphics.Paint.Style.FILL;p.color=if(delta>5)Color.rgb(255,115,91)else Color.rgb(75,211,232);c.drawCircle(x,y,10+delta.coerceIn(0f,20f),p);p.color=Color.WHITE;p.textSize=dp(13).toFloat();p.textAlign=android.graphics.Paint.Align.CENTER;c.drawText("LIVE SENSOR",x,y-r-10,p)};private fun dp(v:Int)=(v*resources.displayMetrics.density).toInt()}
