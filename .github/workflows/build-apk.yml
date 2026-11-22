@@ -1,4 +1,4 @@
-name: Build ECHO APK
+name: Build ECHOS APK
 
 on:
   workflow_dispatch:
@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   build:
-    name: Compile Android APK
+    name: Compile ECHOS Android APK
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source
@@ -33,7 +33,7 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ECHO-APK
+          name: ECHOS-APK
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
